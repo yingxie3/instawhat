@@ -12,7 +12,7 @@ LABEL = 'label'
 MODEL_DIR = './model'
 
 # training parameters
-TRAIN_STEPS = 1
+TRAIN_STEPS = 100
 
 def buildModel():
     # sparse columns
@@ -28,28 +28,31 @@ def buildModel():
     m = tf.contrib.learn.LinearClassifier(model_dir=MODEL_DIR, feature_columns=wide_columns)
     return m
 
-def inputFunc(df):
-  # Creates a dictionary mapping from each continuous feature column name (k) to
-  # the values of that column stored in a constant Tensor.
-  continuousColumns = {k: tf.constant(df[k].values) for k in CONTINUOUS_COLUMNS}
+def inputFunc(df, training=True):
+    # Creates a dictionary mapping from each continuous feature column name (k) to
+    # the values of that column stored in a constant Tensor.
+    continuousColumns = {k: tf.constant(df[k].values) for k in CONTINUOUS_COLUMNS}
 
-  # Creates a dictionary mapping from each categorical feature column name (k)
-  # to the values of that column stored in a tf.SparseTensor.
-  categoricalColumns = {
-      k: tf.SparseTensor(
-          indices=[[i, 0] for i in range(df[k].size)],
-          values=df[k].values,
-          dense_shape=[df[k].size, 1])
-      for k in CATEGORICAL_COLUMNS}
+    # Creates a dictionary mapping from each categorical feature column name (k)
+    # to the values of that column stored in a tf.SparseTensor.
+    categoricalColumns = {
+        k: tf.SparseTensor(
+            indices=[[i, 0] for i in range(df[k].size)],
+            values=df[k].values,
+            dense_shape=[df[k].size, 1])
+        for k in CATEGORICAL_COLUMNS}
 
-  # Merges the two dictionaries into one.
-  columns = dict(continuousColumns)
-  columns.update(categoricalColumns)
-  
-  # Converts the label column into a constant Tensor.
-  label = tf.constant(df[LABEL].values)
-  # Returns the feature columns and the label.
-  return columns, label
+    # Merges the two dictionaries into one.
+    columns = dict(continuousColumns)
+    columns.update(categoricalColumns)
+
+    if training:
+        # Converts the label column into a constant Tensor.
+        label = tf.constant(df[LABEL].values)
+        # Returns the feature columns and the label.
+        return columns, label
+    else:
+        return columns
 
 def getUniqueOrdersProducts(orders, prior):
     # construct data suitable for training. The X would be all the features, using all
@@ -77,9 +80,12 @@ def addLabels(orders, poHash, allUserOrders, allUserProducts):
 
     expandedPO = pd.merge(left=orders, right=podf, how='right', on='order_id')
     expandedPO[LABEL] = 0
-    for index,po in expandedPO.iterrows():
-        if poHash.get("{}:{}".format(po['order_id'], po['product_id'])) == 1:
-            expandedPO.set_value(index, LABEL, 1)
+
+    # if there are known POs, set the label on them to 1
+    if poHash != None:
+        for index,po in expandedPO.iterrows():
+            if poHash.get("{}:{}".format(po['order_id'], po['product_id'])) == 1:
+                expandedPO.set_value(index, LABEL, 1)
     return expandedPO
 
 
@@ -106,6 +112,24 @@ def trainForUser(model, orders, prior, train):
     for key in sorted(results):
         print("%s: %s" % (key, results[key]))
 
+    prediction = list(model.predict(input_fn=lambda: inputFunc(trainPO, training=False)))
+    print(prediction)
+
+    print("done")
+
+# predict for a single user's history
+def predictForUser(model, orders, prior):
+    poHash, priorOrders, allUserProducts = getUniqueOrdersProducts(orders, prior)
+    priorPO = addLabels(orders, poHash, priorOrders, allUserProducts)
+    model.fit(input_fn=lambda: inputFunc(priorPO), steps=TRAIN_STEPS)
+
+    # now predict
+    testOrders = [ orders['order_id'].iloc[-1] ]
+    testPO = addLabels(orders, None, testOrders, allUserProducts)
+
+    prediction = list(model.predict(input_fn=lambda: inputFunc(testPO, training=False)))
+    print(prediction)
+
     print("done")
 
 # We use one user's past history to predict the last order
@@ -125,7 +149,11 @@ def singleUserRegression():
     users = orders.user_id.unique()
     for u in users:
         userOrders = orders.loc[lambda oi: oi.user_id == u]
-        trainForUser(model, userOrders, prior, train)
+        lastOrderType = userOrders['eval_set'].iloc[-1]
+        if lastOrderType == 'train':
+            trainForUser(model, userOrders, prior, train)
+        elif lastOrderType == 'test':
+            predictForUser(model, userOrders, prior)
 
     return
 
