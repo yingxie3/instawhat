@@ -8,13 +8,7 @@ from instadata import *
 
 LABEL = 'label'
 
-
-
-# training and evaluating a single user's history
-def trainForUser(orders, prior, train):
-
-    # orderProducts = pd.concat([prior, train], ignore_index=True)
-
+def getUniqueOrdersProducts(orders, prior):
     # construct data suitable for training. The X would be all the features, using all
     # the products the user has ever ordered. The Y would be 0/1 indicating whether this
     # time the user has ordered the product.
@@ -24,8 +18,11 @@ def trainForUser(orders, prior, train):
         poHash["{}:{}".format(entry['order_id'], entry['product_id'])] = 1
 
     allUserProducts = userProducts.product_id.unique()
-    allUserOrders = orders.order_id.unique()
+    allUserOrders = userProducts.order_id.unique()
 
+    return poHash, allUserOrders, allUserProducts
+
+def addLabels(orders, poHash, allUserOrders, allUserProducts):
     # not the most efficient way, but it's ok since there are not many orders per user.
     allPotentialPO = []
     for p in allUserProducts:
@@ -35,12 +32,30 @@ def trainForUser(orders, prior, train):
     podf = pd.DataFrame(allPotentialPO)
     podf.columns = ['order_id', 'product_id']
 
-    pdb.set_trace()
     expandedPO = pd.merge(left=orders, right=podf, how='right', on='order_id')
     expandedPO[LABEL] = 0
     for index,po in expandedPO.iterrows():
         if poHash.get("{}:{}".format(po['order_id'], po['product_id'])) == 1:
             expandedPO.set_value(index, LABEL, 1)
+    return expandedPO
+
+
+# training and evaluating a single user's history
+def trainForUser(orders, prior, train):
+
+    # orderProducts = pd.concat([prior, train], ignore_index=True)
+    pdb.set_trace()
+
+    priorHash, priorOrders, priorProducts = getUniqueOrdersProducts(orders, prior)
+    trainHash, trainOrders, trainProducts = getUniqueOrdersProducts(orders, train)
+    poHash = priorHash
+    poHash.update(trainHash)
+
+    productsDF = pd.concat([pd.DataFrame(priorProducts), pd.DataFrame(trainProducts)], ignore_index=True)
+    allUserProducts = productsDF[0].unique()
+
+    priorPO = addLabels(orders, poHash, priorOrders, allUserProducts)
+    trainPO = addLabels(orders, poHash, trainOrders, allUserProducts)
 
     '''
     expandedPO[LABEL] = 0
