@@ -6,7 +6,50 @@ import numpy as np
 import tensorflow as tf 
 from instadata import *
 
+CATEGORICAL_COLUMNS = ['product_id']
+CONTINUOUS_COLUMNS  = ['order_dow', 'order_hour_of_day', 'order_number', 'days_since_prior_order']
 LABEL = 'label'
+MODEL_DIR = './model'
+
+# training parameters
+TRAIN_STEPS = 1
+
+def buildModel():
+    # sparse columns
+    productId = tf.contrib.layers.sparse_column_with_hash_bucket("product_id", hash_bucket_size=1000)
+
+    # continuous columns
+    dow = tf.contrib.layers.real_valued_column("order_dow")
+    hour = tf.contrib.layers.real_valued_column("order_hour_of_day")
+    orderNumber = tf.contrib.layers.real_valued_column("order_number")
+    daysSince = tf.contrib.layers.real_valued_column("days_since_prior_order")
+
+    wide_columns = [dow, hour, orderNumber, daysSince]
+    m = tf.contrib.learn.LinearClassifier(model_dir=MODEL_DIR, feature_columns=wide_columns)
+    return m
+
+def inputFunc(df):
+  # Creates a dictionary mapping from each continuous feature column name (k) to
+  # the values of that column stored in a constant Tensor.
+  continuousColumns = {k: tf.constant(df[k].values) for k in CONTINUOUS_COLUMNS}
+
+  # Creates a dictionary mapping from each categorical feature column name (k)
+  # to the values of that column stored in a tf.SparseTensor.
+  categoricalColumns = {
+      k: tf.SparseTensor(
+          indices=[[i, 0] for i in range(df[k].size)],
+          values=df[k].values,
+          dense_shape=[df[k].size, 1])
+      for k in CATEGORICAL_COLUMNS}
+
+  # Merges the two dictionaries into one.
+  columns = dict(continuousColumns)
+  columns.update(categoricalColumns)
+  
+  # Converts the label column into a constant Tensor.
+  label = tf.constant(df[LABEL].values)
+  # Returns the feature columns and the label.
+  return columns, label
 
 def getUniqueOrdersProducts(orders, prior):
     # construct data suitable for training. The X would be all the features, using all
@@ -41,13 +84,14 @@ def addLabels(orders, poHash, allUserOrders, allUserProducts):
 
 
 # training and evaluating a single user's history
-def trainForUser(orders, prior, train):
+def trainForUser(model, orders, prior, train):
 
     # orderProducts = pd.concat([prior, train], ignore_index=True)
-    pdb.set_trace()
+    trainHash, trainOrders, trainProducts = getUniqueOrdersProducts(orders, train)
+    if len(trainProducts) == 0:
+        return
 
     priorHash, priorOrders, priorProducts = getUniqueOrdersProducts(orders, prior)
-    trainHash, trainOrders, trainProducts = getUniqueOrdersProducts(orders, train)
     poHash = priorHash
     poHash.update(trainHash)
 
@@ -57,15 +101,16 @@ def trainForUser(orders, prior, train):
     priorPO = addLabels(orders, poHash, priorOrders, allUserProducts)
     trainPO = addLabels(orders, poHash, trainOrders, allUserProducts)
 
-    '''
-    expandedPO[LABEL] = 0
-    expandedPO[LABEL] = expandedPO.apply(lambda x: poHash.get("{}:{}".format(x.order_id, x.product_id)) == 1 )
-    '''
+    model.fit(input_fn=lambda: inputFunc(priorPO), steps=TRAIN_STEPS)
+    results = model.evaluate(input_fn=lambda: inputFunc(trainPO), steps=1)
+    for key in sorted(results):
+        print("%s: %s" % (key, results[key]))
+
     print("done")
 
 # We use one user's past history to predict the last order
 def singleUserRegression():
-
+    model = buildModel()
     orders = loadDataFile('orders')
 
     prior = loadDataFile('order_products__prior')
@@ -75,11 +120,12 @@ def singleUserRegression():
     del train['add_to_cart_order']
     del train['reordered']
 
+    pdb.set_trace()
     # Every time pick a single user, merge the data just for this one user, and run regressor.
     users = orders.user_id.unique()
     for u in users:
         userOrders = orders.loc[lambda oi: oi.user_id == u]
-        trainForUser(userOrders, prior, train)
+        trainForUser(model, userOrders, prior, train)
 
     return
 
