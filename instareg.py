@@ -4,6 +4,7 @@ import pandas as pd
 import pdb
 import numpy as np
 import tensorflow as tf 
+from sklearn.metrics import f1_score
 from instadata import *
 
 CATEGORICAL_COLUMNS = ['product_id']
@@ -124,6 +125,9 @@ def trainForUser(model, orders, prior, train):
     prediction = list(model.predict(input_fn=lambda: inputFunc(trainPO, training=False)))
     print(prediction)
 
+    truth = trainPO[LABEL].tolist()
+    print("f1_score: {}".format(f1_score(truth, prediction)))
+
     print("done")
 
 # predict for a single user's history
@@ -138,6 +142,8 @@ def predictForUser(model, orders, prior):
 
     prediction = list(model.predict(input_fn=lambda: inputFunc(testPO, training=False)))
     print(prediction)
+
+    # 
 
     print("done")
 
