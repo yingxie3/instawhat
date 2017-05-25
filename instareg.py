@@ -12,11 +12,11 @@ LABEL = 'label'
 MODEL_DIR = './model'
 
 # training parameters
-TRAIN_STEPS = 100
+TRAIN_STEPS = 1000
 
 def buildModel():
     # sparse columns
-    productId = tf.contrib.layers.sparse_column_with_hash_bucket("product_id", hash_bucket_size=1000)
+    productId = tf.contrib.layers.sparse_column_with_hash_bucket("product_id", hash_bucket_size=1000, dtype=tf.int64)
 
     # continuous columns
     dow = tf.contrib.layers.real_valued_column("order_dow")
@@ -24,8 +24,17 @@ def buildModel():
     orderNumber = tf.contrib.layers.real_valued_column("order_number")
     daysSince = tf.contrib.layers.real_valued_column("days_since_prior_order")
 
-    wide_columns = [dow, hour, orderNumber, daysSince]
-    m = tf.contrib.learn.LinearClassifier(model_dir=MODEL_DIR, feature_columns=wide_columns)
+    wideColumns = [productId, dow, hour, orderNumber, daysSince]
+    # m = tf.contrib.learn.LinearClassifier(model_dir=MODEL_DIR, feature_columns=wideColumns)
+
+    deepColumns = [tf.contrib.layers.embedding_column(productId, dimension=8), dow, hour, orderNumber, daysSince]
+
+    m = tf.contrib.learn.DNNLinearCombinedClassifier(
+        model_dir=MODEL_DIR,
+        linear_feature_columns=wideColumns,
+        dnn_feature_columns=deepColumns,
+        dnn_hidden_units=[100, 50],
+        fix_global_step_increment_bug=True)
     return m
 
 def inputFunc(df, training=True):
