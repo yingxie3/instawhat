@@ -7,6 +7,7 @@ import tensorflow as tf
 import keras.backend as kb
 from keras import losses
 from keras import models
+from keras import regularizers
 from keras.layers.core import Dense
 from keras.layers.core import Flatten
 from keras.layers import Input
@@ -26,7 +27,9 @@ LABEL = 'label'
 MODEL_DIR = './model'
 
 # training parameters
-TRAIN_STEPS = 10
+TRAIN_STEPS = 100
+trainCount = 0
+trainF1 = 0
 
 def buildModel():
     productIdInput = Input(shape=(1,), dtype='int32', name='product_id')
@@ -38,13 +41,9 @@ def buildModel():
     orderNumberInput = Input(shape=(1,), dtype='float32', name='order_number')
     daysSinceInput = Input(shape=(1,), dtype='float32', name='days_since_prior_order')
     x = concatenate([productIdFlatten, dowInput, hourInput, orderNumberInput, daysSinceInput])
-    '''
-    x = concatenate([productIdFlatten, kb.cast(dowInput, dtype='float32'), 
-        kb.cast(hourInput, dtype='float32'), kb.cast(orderNumberInput, dtype='float32'), daysSinceInput])
-    '''
 
-    x = Dense(100, activation='relu')(x)
-    x = Dense(50, activation='relu')(x)
+    x = Dense(100, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = Dense(50, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
     prediction = Dense(1, activation='sigmoid')(x)
 
     model = models.Model(inputs=[productIdInput, dowInput, hourInput, orderNumberInput, daysSinceInput], outputs=[prediction])
@@ -55,24 +54,6 @@ def buildModel():
     return model, board
 
 def inputFunc(df, training=True):
-    '''
-    # Creates a dictionary mapping from each continuous feature column name (k) to
-    # the values of that column stored in a constant Tensor.
-    continuousColumns = {k: tf.constant(df[k].values) for k in CONTINUOUS_COLUMNS}
-
-    # Creates a dictionary mapping from each categorical feature column name (k)
-    # to the values of that column stored in a tf.SparseTensor.
-    categoricalColumns = {
-        k: tf.SparseTensor(
-            indices=[[i, 0] for i in range(df[k].size)],
-            values=df[k].values,
-            dense_shape=[df[k].size, 1])
-        for k in CATEGORICAL_COLUMNS}
-
-    # Merges the two dictionaries into one.
-    columns = dict(continuousColumns)
-    columns.update(categoricalColumns)
-    '''
     columns = {k: df[k] for k in ALL_COLUMNS}
 
     if training:
@@ -136,6 +117,7 @@ def trainForUser(model, userId, userOrders, orderPrior, orderTrain):
     trainPO = addLabels(userOrders, poHash, trainOrders, allUserProducts)
 
     x,y = inputFunc(priorPO)
+    #model.reset_states()
     history = model.fit(x=x, y=y, batch_size=32, epochs=TRAIN_STEPS)
 
     train_x, train_y = inputFunc(trainPO)
@@ -148,15 +130,22 @@ def trainForUser(model, userId, userOrders, orderPrior, orderTrain):
     print(prediction)
 
     truth = trainPO[LABEL].tolist()
-    print("====================== f1_score: {}".format(f1_score(truth, prediction)))
+    f1 = f1_score(truth, prediction)
+
+    global trainCount, trainF1
+    trainCount += 1
+    trainF1 += f1
+    print("******************************************* f1_score: {} avg: {}".format(f1, trainF1/trainCount))
 
 # predict for a single user's history
 def predictForUser(model, userId, userOrders, orderPrior): 
+    return
 
     poHash, priorOrders, allUserProducts = getUniqueOrdersProducts(userId, orderPrior)
     priorPO = addLabels(userOrders, poHash, priorOrders, allUserProducts)
 
     x,y = inputFunc(priorPO)
+    #model.reset_states()
     history = model.fit(x=x, y=y, batch_size=32, epochs=TRAIN_STEPS)
 
     # now predict
@@ -174,7 +163,6 @@ def predictForUser(model, userId, userOrders, orderPrior):
 
 # We use one user's past history to predict the last order
 def singleUserRegression():
-    pdb.set_trace()
     model, board = buildModel()
     orders = loadDataFile('orders')
 
