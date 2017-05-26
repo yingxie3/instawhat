@@ -26,7 +26,7 @@ LABEL = 'label'
 MODEL_DIR = './model'
 
 # training parameters
-TRAIN_STEPS = 100
+TRAIN_STEPS = 10
 
 def buildModel():
     productIdInput = Input(shape=(1,), dtype='int32', name='product_id')
@@ -142,32 +142,33 @@ def trainForUser(model, userId, userOrders, orderPrior, orderTrain):
     loss, metrics = model.evaluate(x=train_x, y=train_y)
 
     prediction = model.predict(x=train_x)
-    prediction.reshape((len(prediction)))
+    prediction = prediction.reshape((len(prediction)))
     prediction[prediction > 0.5] = 1
     prediction[prediction < 0.5] = 0
     print(prediction)
 
     truth = trainPO[LABEL].tolist()
-    print("f1_score: {}".format(f1_score(truth, prediction)))
-
-    print("done")
+    print("====================== f1_score: {}".format(f1_score(truth, prediction)))
 
 # predict for a single user's history
-def predictForUser(model, orderPrior): 
-    return
+def predictForUser(model, userId, userOrders, orderPrior): 
 
-    poHash, priorOrders, allUserProducts = getUniqueOrdersProducts(orders, prior)
-    priorPO = addLabels(orders, poHash, priorOrders, allUserProducts)
-    model.fit(input_fn=lambda: inputFunc(priorPO), steps=TRAIN_STEPS)
+    poHash, priorOrders, allUserProducts = getUniqueOrdersProducts(userId, orderPrior)
+    priorPO = addLabels(userOrders, poHash, priorOrders, allUserProducts)
+
+    x,y = inputFunc(priorPO)
+    history = model.fit(x=x, y=y, batch_size=32, epochs=TRAIN_STEPS)
 
     # now predict
-    testOrders = [ orders['order_id'].iloc[-1] ]
-    testPO = addLabels(orders, None, testOrders, allUserProducts)
+    testOrders = [ userOrders['order_id'].iloc[-1] ]
+    testPO = addLabels(userOrders, None, testOrders, allUserProducts)
 
-    prediction = list(model.predict(input_fn=lambda: inputFunc(testPO, training=False)))
+    test_x =  inputFunc(testPO, training=False)
+    prediction = model.predict(x=test_x)
+    prediction = prediction.reshape((len(prediction)))
+    prediction[prediction > 0.5] = 1
+    prediction[prediction < 0.5] = 0
     print(prediction)
-
-    # 
 
     print("done")
 
@@ -196,7 +197,7 @@ def singleUserRegression():
         if lastOrderType == 'train':
             trainForUser(model, uid, userOrders, orderPrior, orderTrain)
         elif lastOrderType == 'test':
-            predictForUser(model, orderPrior)
+            predictForUser(model, uid, userOrders, orderPrior)
 
     return
 
