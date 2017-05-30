@@ -27,7 +27,7 @@ LABEL = 'label'
 MODEL_DIR = './model'
 
 # training parameters
-TRAIN_STEPS = 100
+TRAIN_STEPS = 50
 trainCount = 0
 trainF1 = 0
 
@@ -64,17 +64,31 @@ def inputFunc(df, training=True):
     else:
         return columns
 
-def getUniqueOrdersProducts(userId, orderPrior):
+def getUniqueOrdersProducts(userId, orderPrior, reorderedOnly=False):
     # construct data suitable for training. The X would be all the features, using all
     # the products the user has ever ordered. The Y would be 0/1 indicating whether this
     # time the user has ordered the product.
 
     userProducts = orderPrior.loc[lambda x: x.user_id == userId]
     poHash = {}
-    for index,entry in userProducts.iterrows():
-        poHash["{}:{}".format(entry['order_id'], entry['product_id'])] = 1
 
-    allUserProducts = userProducts.product_id.unique()
+    if reorderedOnly:
+        reorderedProducts = []
+        for index,entry in userProducts.iterrows():
+            if entry['reordered'] == 1:
+                reorderedProducts.append(entry['product_id'])
+                poHash["{}:{}".format(entry['order_id'], entry['product_id'])] = 1
+
+        if len(reorderedProducts) == 0:
+            # a hopeless situation. Just use a few products from the last order
+            allUserProducts = userProducts.tail().product_id.unique()
+        else:
+            allUserProducts = pd.DataFrame(reorderedProducts)[0].unique()
+    else:
+        for index,entry in userProducts.iterrows():
+            poHash["{}:{}".format(entry['order_id'], entry['product_id'])] = 1
+        allUserProducts = userProducts.product_id.unique()
+        
     allUserOrders = userProducts.order_id.unique()
 
     return poHash, allUserOrders, allUserProducts
@@ -99,38 +113,71 @@ def addLabels(orders, poHash, allUserOrders, allUserProducts):
                 expandedPO.set_value(index, LABEL, 1)
     return expandedPO
 
+def getEvalSet(trainPO, priorProducts):
+    first = trainPO.iloc[0]
+    evalArray = []
+    for pid in priorProducts:
+        entry = first.copy()
+        entry.product_id = pid
+        evalArray.append(entry)
+    return pd.DataFrame(evalArray)
+
+def getF1Score(evalX, prediction, evalProducts, trainPO, trainProducts):
+    evalProductHash = {}
+    for entry in evalProducts:
+        evalProductHash[entry] = 1
+
+    trainProductHash = {}
+    for entry in trainProducts:
+        trainProductHash[entry] = 1
+    
+    # what's missing is predicted as 0
+    missingPrediction = []
+    for entry in trainProducts:
+        if evalProductHash.get(entry) != 1:
+            missingPrediction.append(0)
+    prediction = np.append(prediction, missingPrediction)
+
+    # go through the products in the same order and fill in zeros and ones
+    truth = np.ones(len(prediction), dtype=int)
+    for index,entry in enumerate(evalProducts):
+        truth[index] = int(trainProductHash.get(entry) == 1)
+
+    return f1_score(truth, prediction)
 
 # training and evaluating a single user's history
-def trainForUser(model, userId, userOrders, orderPrior, orderTrain):
-    trainHash, trainOrders, trainProducts = getUniqueOrdersProducts(userId, orderTrain)
+def trainForUser(model, board, userId, userOrders, orderPrior, orderTrain):
+    trainHash, trainOrders, trainProducts = getUniqueOrdersProducts(userId, orderTrain, reorderedOnly=False)
     if len(trainProducts) == 0:
         return
 
-    priorHash, priorOrders, priorProducts = getUniqueOrdersProducts(userId, orderPrior)
-    poHash = priorHash
-    poHash.update(trainHash)
+    priorHash, priorOrders, priorProducts = getUniqueOrdersProducts(userId, orderPrior, reorderedOnly=True)
 
+    '''
     productsDF = pd.concat([pd.DataFrame(priorProducts), pd.DataFrame(trainProducts)], ignore_index=True)
     allUserProducts = productsDF[0].unique()
+    '''
 
-    priorPO = addLabels(userOrders, poHash, priorOrders, allUserProducts)
-    trainPO = addLabels(userOrders, poHash, trainOrders, allUserProducts)
+    priorPO = addLabels(userOrders, priorHash, priorOrders, priorProducts)
+    trainPO = addLabels(userOrders, trainHash, trainOrders, trainProducts)
 
     x,y = inputFunc(priorPO)
-    #model.reset_states()
-    history = model.fit(x=x, y=y, batch_size=32, epochs=TRAIN_STEPS)
+    model.reset_states()
+    history = model.fit(x=x, y=y, batch_size=32, epochs=TRAIN_STEPS, callbacks=[board])
 
-    train_x, train_y = inputFunc(trainPO)
-    loss, metrics = model.evaluate(x=train_x, y=train_y)
+    # Generate a eval set using the trainPO's order number, but the priorPO's product list (we can only predict
+    # products we have seen). Afterwards, we will consolidate the prediction result back to the trainPO data
+    # set for a f1 score.
+    evalPO = getEvalSet(trainPO, priorProducts)
 
-    prediction = model.predict(x=train_x)
+    evalX, evalY = inputFunc(evalPO)
+    prediction = model.predict(x=evalX)
     prediction = prediction.reshape((len(prediction)))
     prediction[prediction > 0.5] = 1
     prediction[prediction < 0.5] = 0
     print(prediction)
 
-    truth = trainPO[LABEL].tolist()
-    f1 = f1_score(truth, prediction)
+    f1 = getF1Score(evalX, prediction, priorProducts, trainPO, trainProducts)
 
     global trainCount, trainF1
     trainCount += 1
@@ -145,7 +192,7 @@ def predictForUser(model, userId, userOrders, orderPrior):
     priorPO = addLabels(userOrders, poHash, priorOrders, allUserProducts)
 
     x,y = inputFunc(priorPO)
-    #model.reset_states()
+    model.reset_states()
     history = model.fit(x=x, y=y, batch_size=32, epochs=TRAIN_STEPS)
 
     # now predict
@@ -168,10 +215,8 @@ def singleUserRegression():
 
     prior = loadDataFile('order_products__prior')
     del prior['add_to_cart_order']
-    del prior['reordered']
     train = loadDataFile('order_products__train')
     del train['add_to_cart_order']
-    del train['reordered']
 
 
     orderPrior = pd.merge(left=orders, right=prior, how='inner', on='order_id')
@@ -183,7 +228,7 @@ def singleUserRegression():
         userOrders = orders.loc[lambda x: x.user_id == uid]
         lastOrderType = userOrders['eval_set'].iloc[-1]
         if lastOrderType == 'train':
-            trainForUser(model, uid, userOrders, orderPrior, orderTrain)
+            trainForUser(model, board, uid, userOrders, orderPrior, orderTrain)
         elif lastOrderType == 'test':
             predictForUser(model, uid, userOrders, orderPrior)
 
