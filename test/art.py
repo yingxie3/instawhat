@@ -28,13 +28,13 @@ def funcCond(seed, start, count):
     y = np.zeros(count)
 
     for i in range(count):
-        x['x0'][i][0] = start+i
+        x['x0'][i][0] = int((start+i) % 10 == 0)
         x['x1'][i][0] = random.randint(1, 10)
         if i >= 1:
             y[i] = x['x1'][i-1][0]
             x['x1'][i][1] = x['x1'][i-1][0]
             
-            if i % 10 == 0:
+            if (start+i) % 10 == 0:
                 y[i] = x['x1'][i][0]
         else:
             y[i] = seed
@@ -49,7 +49,7 @@ def buildDenseModel():
     x = concatenate(inputs)
 
     x = Dense(100, activation='relu', name='dense1', kernel_regularizer=regularizers.l2(0.01))(x)
-    x = Dense(50, activation='relu', name='dense2', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = Dense(20, activation='relu', name='dense2', kernel_regularizer=regularizers.l2(0.01))(x)
     prediction = Dense(1, name='dense3')(x)
 
     model = models.Model(inputs=inputs, outputs=[prediction])
@@ -61,7 +61,7 @@ def buildDenseModel():
 def testCond(model, board):
     x,y = funcCond(0, 0, 1000)
     evalX, evalY = funcCond(x['x1'][999][0], 1000, 100)
-    history = model.fit(x=x, y=y, validation_data=(evalX, evalY), batch_size=100, epochs=400, callbacks=[board])
+    history = model.fit(x=x, y=y, validation_data=(evalX, evalY), batch_size=100, epochs=2000, callbacks=[board])
 
     return
     loss, metrics = model.evaluate(x=evalX, y=evalY)
