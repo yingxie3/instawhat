@@ -81,7 +81,8 @@ def trainForUser(userOrders, userPrior, userTrain):
     predictedProducts = predictForUser(userOrders, userPrior)
 
     # calculate F1 score
-    f1 = f1Score(pd.DataFrame(predictedProducts, columns=['product_id']), pd.DataFrame(userTrain.product_id))
+    f1 = f1Score(pd.DataFrame(predictedProducts, columns=['product_id']),
+        pd.DataFrame(userTrain[:, COL_PRODUCT_ID], columns=['product_id']))
     return f1
 
 def getUidRangeEnd(array, startIndex):
