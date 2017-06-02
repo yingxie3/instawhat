@@ -103,6 +103,9 @@ def weightRegression(training):
             range *= 2
             priorRange = orderPrior.iloc[priorStartIndex : priorStartIndex+range]
             uid = priorRange.iloc[-1].user_id
+            if len(priorRange) < range:
+                # the very last one
+                break
 
         userPrior = priorRange.loc[lambda x: x.user_id == currentUid]
         userOrders = orders.iloc[orderStartIndex:].loc[lambda x: x.user_id == currentUid]
@@ -110,10 +113,10 @@ def weightRegression(training):
         priorStartIndex += len(userPrior)
         orderStartIndex += len(userOrders)
 
-        nextUid = orderPrior.iloc[priorStartIndex].user_id
-        assert nextUid != currentUid
         if orderStartIndex < len(orders):
-            assert orders.iloc[orderStartIndex].user_id == nextUid
+            nextUid = orders.iloc[orderStartIndex].user_id
+            assert nextUid == orderPrior.iloc[priorStartIndex].user_id
+            assert nextUid != currentUid
 
         lastOrder = userOrders.iloc[-1]
         lastOrderType = lastOrder['eval_set']
@@ -138,8 +141,10 @@ def weightRegression(training):
             allpredictions.append(p)
 
             progress += 1
+
             if progress % 100 == 0:
                 print("------------------processed {}".format(progress))
+
     predictionDF = pd.DataFrame(allpredictions, columns=['order_id', 'products'])
     predictionDF.to_csv("submission.csv", index=False)
     return
