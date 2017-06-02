@@ -7,6 +7,7 @@
 
 import pandas as pd 
 import pdb
+import argparse
 import numpy as np
 import tensorflow as tf 
 import keras.backend as kb
@@ -47,9 +48,7 @@ def f1Score(prediction,actual):
     recall = len(correct) / len(actual)
     return 2 * precision * recall / (precision + recall)
 
-def trainForUser(userOrders, userPrior, userTrain):
-    # train to get weight, not done yet
-
+def predictForUser(userOrders, userPrior):
     # for now make the last order's weight 1, others 0
     priorOrders = userOrders[0:len(userOrders)-1]
     orderHash = {k : 0 for k in priorOrders.order_id}
@@ -68,13 +67,17 @@ def trainForUser(userOrders, userPrior, userTrain):
     for productId in productHash:
         if productHash[productId] > 0.5:
             predictedProducts.append(productId)
+    return predictedProducts
+
+def trainForUser(userOrders, userPrior, userTrain):
+    predictedProducts = predictForUser(userOrders, userPrior)
 
     # calculate F1 score
     f1 = f1Score(pd.DataFrame(predictedProducts, columns=['product_id']), pd.DataFrame(userTrain.product_id))
     return f1
 
 # We use one user's past history to predict the last order
-def weightRegression():
+def weightRegression(training):
     orders = loadDataFile('orders')
     prior = loadDataFile('order_products__prior')
     del prior['add_to_cart_order']
@@ -84,12 +87,13 @@ def weightRegression():
     orderPrior = pd.merge(left=orders, right=prior, how='inner', on='order_id')
     orderTrain = pd.merge(left=orders, right=train, how='inner', on='order_id')
 
-    pdb.set_trace()
     # Everything is sorted by user_id, order_id, order_number, add_to_cart_order after the above merge.
     priorStartIndex = 0
     trainStartIndex = 0
     orderStartIndex = 0
+    allpredictions = []
     nextUid = orderPrior.iloc[priorStartIndex].user_id
+    progress = 0
     while orderStartIndex < len(orders):
         currentUid = nextUid
         range = 100
@@ -111,8 +115,10 @@ def weightRegression():
         if orderStartIndex < len(orders):
             assert orders.iloc[orderStartIndex].user_id == nextUid
 
-        lastOrderType = userOrders['eval_set'].iloc[-1]
-        if lastOrderType == 'train':
+        lastOrder = userOrders.iloc[-1]
+        lastOrderType = lastOrder['eval_set']
+
+        if lastOrderType == 'train' and training:
             # no range, train set is small
             userTrain = orderTrain.iloc[trainStartIndex:].loc[lambda x: x.user_id == currentUid] 
             trainStartIndex += len(userTrain)
@@ -123,10 +129,25 @@ def weightRegression():
             global trainCount, trainF1
             trainCount += 1
             trainF1 += f1
-            print("******************************************* f1_score: {:.4f} avg: {:.4f}".format(f1, trainF1/trainCount))
-            
 
+            if trainCount % 100 == 0:
+                print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
+        elif lastOrderType == 'test' and (not training):
+            predictedProducts = predictForUser(userOrders, userPrior)
+            p = [lastOrder.order_id, ''.join(str(e) + ' ' for e in predictedProducts)]
+            allpredictions.append(p)
+
+            progress += 1
+            if progress % 100 == 0:
+                print("------------------processed {}".format(progress))
+    predictionDF = pd.DataFrame(allpredictions, columns=['order_id', 'products'])
+    predictionDF.to_csv("submission.csv", index=False)
     return
 
 if __name__ == '__main__':
-    weightRegression()
+    parser = argparse.ArgumentParser(description='Parsing and training')                                         
+    parser.add_argument("-t", "--train", help="Train the model.", action="store_true")
+                                                                                                                 
+    args = parser.parse_args()                                                                                   
+    
+    weightRegression(args.train)
