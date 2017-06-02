@@ -26,9 +26,18 @@ from keras.optimizers import adam
 from sklearn.metrics import f1_score
 from instadata import *
 
-CATEGORICAL_COLUMNS = ['product_id']
-CONTINUOUS_COLUMNS  = ['order_dow', 'order_hour_of_day', 'order_number', 'days_since_prior_order']
-ALL_COLUMNS = ['product_id', 'order_dow', 'order_hour_of_day', 'order_number', 'days_since_prior_order']
+COLUMNS = ['product_id', 'order_dow', 'order_hour_of_day', 'order_number', 'days_since_prior_order']
+# column index
+COL_ORDER_ID = 0
+COL_USER_ID = 1
+COL_EVAL_SET = 2
+COL_ORDER_NUMBER = 3
+COL_ORDER_DOW = 4
+COL_ORDER_HOUR = 5
+COL_DAYS_SINCE = 6
+COL_PRODUCT_ID = 7
+COL_REORDERED = 8
+
 LABEL = 'label'
 MODEL_DIR = './model'
 
@@ -51,16 +60,15 @@ def f1Score(prediction,actual):
 def predictForUser(userOrders, userPrior):
     # for now make the last order's weight 1, others 0
     priorOrders = userOrders[0:len(userOrders)-1]
-    orderHash = {k : 0 for k in priorOrders.order_id}
-    orderHash[priorOrders.iloc[-1].order_id] = 1
+    orderHash = {k[COL_ORDER_ID] : 0 for k in priorOrders}
+    orderHash[priorOrders[-1][COL_ORDER_ID]] = 1
 
     # assign the weights from orders to the products
-    productHash = {k : 0 for k in userPrior.product_id}
-    for row in userPrior.iterrows():
-        entry = row[1]
-        w = orderHash[entry.order_id]
+    productHash = {k[COL_PRODUCT_ID] : 0 for k in userPrior}
+    for entry in userPrior:
+        w = orderHash[entry[COL_ORDER_ID]]
         # productHash[entry.product_id] += (w * int(entry.reordered)) # if reordered is 0 throw it out
-        productHash[entry.product_id] += w
+        productHash[entry[COL_PRODUCT_ID]] += w
 
     # select products based on weights
     predictedProducts = []
@@ -76,6 +84,17 @@ def trainForUser(userOrders, userPrior, userTrain):
     f1 = f1Score(pd.DataFrame(predictedProducts, columns=['product_id']), pd.DataFrame(userTrain.product_id))
     return f1
 
+def getUidRangeEnd(array, startIndex):
+    uid = array[startIndex][COL_USER_ID]
+    arrayLen = len(array)
+    i = startIndex
+    while i < arrayLen:
+        if array[i][COL_USER_ID] != uid:
+            break
+        i += 1
+
+    return i
+
 # We use one user's past history to predict the last order
 def weightRegression(training):
     orders = loadDataFile('orders')
@@ -84,49 +103,42 @@ def weightRegression(training):
     train = loadDataFile('order_products__train')
     del train['add_to_cart_order']
 
-    orderPrior = pd.merge(left=orders, right=prior, how='inner', on='order_id')
-    orderTrain = pd.merge(left=orders, right=train, how='inner', on='order_id')
+    orderPrior = pd.merge(left=orders, right=prior, how='inner', on='order_id').values
+    orderTrain = pd.merge(left=orders, right=train, how='inner', on='order_id').values
+    orders = orders.values
 
     # Everything is sorted by user_id, order_id, order_number, add_to_cart_order after the above merge.
     priorStartIndex = 0
     trainStartIndex = 0
     orderStartIndex = 0
     allpredictions = []
-    nextUid = orderPrior.iloc[priorStartIndex].user_id
+    nextUid = orderPrior[priorStartIndex][COL_USER_ID]
     progress = 0
     while orderStartIndex < len(orders):
         currentUid = nextUid
-        range = 100
-        uid = currentUid
-        # first find the end point for the user. Just needs to be a rough guess.
-        while uid == currentUid:
-            range *= 2
-            priorRange = orderPrior.iloc[priorStartIndex : priorStartIndex+range]
-            uid = priorRange.iloc[-1].user_id
-            if len(priorRange) < range:
-                # the very last one
-                break
 
-        userPrior = priorRange.loc[lambda x: x.user_id == currentUid]
-        userOrders = orders.iloc[orderStartIndex:].loc[lambda x: x.user_id == currentUid]
+        priorEndIndex = getUidRangeEnd(orderPrior, priorStartIndex)
+        orderEndIndex = getUidRangeEnd(orders, orderStartIndex)
+        userPrior = orderPrior[priorStartIndex : priorEndIndex]
+        userOrders = orders[orderStartIndex : orderEndIndex]
 
-        priorStartIndex += len(userPrior)
-        orderStartIndex += len(userOrders)
+        priorStartIndex = priorEndIndex
+        orderStartIndex = orderEndIndex
 
         if orderStartIndex < len(orders):
-            nextUid = orders.iloc[orderStartIndex].user_id
-            assert nextUid == orderPrior.iloc[priorStartIndex].user_id
+            nextUid = orders[orderStartIndex][COL_USER_ID]
+            assert nextUid == orderPrior[priorStartIndex][COL_USER_ID]
             assert nextUid != currentUid
 
-        lastOrder = userOrders.iloc[-1]
-        lastOrderType = lastOrder['eval_set']
+        lastOrder = userOrders[-1]
+        lastOrderType = lastOrder[COL_EVAL_SET]
 
         if lastOrderType == 'train' and training:
-            # no range, train set is small
-            userTrain = orderTrain.iloc[trainStartIndex:].loc[lambda x: x.user_id == currentUid] 
-            trainStartIndex += len(userTrain)
+            trainEndIndex = getUidRangeEnd(orderTrain, trainStartIndex)
+            userTrain = orderTrain[trainStartIndex : trainEndIndex]
+            trainStartIndex = trainEndIndex
             if trainStartIndex < len(orderTrain):
-                assert orderTrain.iloc[trainStartIndex].user_id != currentUid
+                assert orderTrain[trainStartIndex][COL_USER_ID] != currentUid
 
             f1 = trainForUser(userOrders, userPrior, userTrain)
             global trainCount, trainF1
@@ -137,7 +149,7 @@ def weightRegression(training):
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
         elif lastOrderType == 'test' and (not training):
             predictedProducts = predictForUser(userOrders, userPrior)
-            p = [lastOrder.order_id, ''.join(str(e) + ' ' for e in predictedProducts)]
+            p = [lastOrder[COL_ORDER_ID], ''.join(str(e) + ' ' for e in predictedProducts)]
             allpredictions.append(p)
 
             progress += 1
