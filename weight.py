@@ -7,6 +7,7 @@
 
 import pandas as pd 
 import pdb
+import json
 import argparse
 import numpy as np
 import tensorflow as tf 
@@ -20,10 +21,11 @@ from keras.layers import Input
 from keras.layers import Embedding
 from keras.layers import concatenate
 from keras.layers.merge import *
-from keras.layers.convolutional import Conv2D
+from keras.layers.advanced_activations import LeakyReLU
 from keras.callbacks import TensorBoard
 from keras.optimizers import adam
 from sklearn.metrics import f1_score
+from shutil import copyfile
 from instadata import *
 
 COLUMNS = ['product_id', 'order_dow', 'order_hour_of_day', 'order_number', 'days_since_prior_order']
@@ -46,15 +48,52 @@ TCOL_OLD_HOUR = 3
 TCOL_HOUR = 4
 TCOL_OLD_DAYS_SINCE = 5
 TCOL_DAYS_SINCE = 6
+# the score we are predicting, must be the last
 TCOL_SCORE = 7
 
 LABEL = 'label'
 MODEL_DIR = './model'
 
 # training parameters
+BATCH_SIZE = 1000
 TRAIN_STEPS = 50
 trainCount = 0
 trainF1 = 0
+
+class ReplayMemory(object):
+    def __init__(self, maxMemory=100000):
+        self.maxMemory = maxMemory
+        self.current = 0
+        self.count = 0
+        self.x = np.zeros(shape=(maxMemory, TCOL_SCORE))
+        self.y = np.zeros(shape=(maxMemory,))
+
+    def remember(self, x, y):
+        assert len(x) == len(y)
+        for i in range(0, len(x)):
+            self.x[self.current] = x[i]
+            self.y[self.current] = y[i]
+
+            self.current += 1
+            self.count += 1
+            if self.current >= self.maxMemory:
+                self.current = 0
+
+    def getBatch(self, batchSize):
+        validCount = min(self.count, self.maxMemory)
+        x = np.empty(shape=(batchSize, TCOL_SCORE))
+        y = np.empty(shape=(batchSize,))
+
+        for i, idx in enumerate(np.random.randint(0, validCount, size=batchSize)):
+            x[i] = self.x[idx]
+            y[i] = self.y[idx]
+
+        return x,y
+
+# Generate the input to the NN from the old and new data order data point
+def getInput(old, new):
+    return np.array([new[COL_ORDER_NUMBER] - old[COL_ORDER_NUMBER], old[COL_ORDER_DOW], new[COL_ORDER_DOW],
+        old[COL_ORDER_HOUR], new[COL_ORDER_HOUR], old[COL_DAYS_SINCE], new[COL_DAYS_SINCE]])
 
 # generate the data in sequence, we will randomize during training
 def generateTrainingData(userOrders, userPrior):
@@ -69,57 +108,74 @@ def generateTrainingData(userOrders, userPrior):
             break
         hashEntry.append(entry[COL_PRODUCT_ID])
 
-    samples = []
+    x = []
+    y = []
     for i1 in range(0, len(priorOrders)-1):
         for i2 in range(i1+1, len(priorOrders)):
             old = priorOrders[i1]
             new = priorOrders[i2]
 
-            f1 = f1Score(hashEntry[o1[COL_ORDER_ID]], hashEntry[o2[COL_ORDER_ID]])
-            entry = [new[COL_ORDER_NUMBER] - old[COL_ORDER_NUMBER], old[COL_ORDER_DOW], new[COL_ORDER_DOW],
-                old[COL_ORDER_HOUR], new[COL_ORDER_HOUR], old[COL_DAYS_SINCE], new[COL_DAYS_SINCE], f1]
-            samples.append(entry)
-    return samples
-    
-def buildModel():
-    productIdInput = Input(shape=(1,), dtype='int32', name='product_id')
-    productIdEmbedding = Embedding(input_dim=50000, output_dim=4)(productIdInput)
-    productIdFlatten = Flatten()(productIdEmbedding)
+            f1, precision, recall = f1Score(productHash[old[COL_ORDER_ID]], productHash[new[COL_ORDER_ID]])
+            x.append(getInput(old, new))
+            y.append(precision)
+    return x,y
 
-    dowInput = Input(shape=(1,), dtype='float32', name='order_dow')
-    hourInput = Input(shape=(1,), dtype='float32', name='order_hour_of_day')
-    orderNumberInput = Input(shape=(1,), dtype='float32', name='order_number')
-    daysSinceInput = Input(shape=(1,), dtype='float32', name='days_since_prior_order')
-    x = concatenate([productIdFlatten, dowInput, hourInput, orderNumberInput, daysSinceInput])
+def createModel():
+    model = models.Sequential()
+    model.add(Dense(100, input_shape=(TCOL_SCORE,)))
+    model.add(LeakyReLU(alpha=0.03))
+    model.add(Dense(100))
+    model.add(LeakyReLU(alpha=0.03))
+    model.add(Dense(100))
+    model.add(LeakyReLU(alpha=0.03))
+    model.add(Dense(100))
+    model.add(LeakyReLU(alpha=0.03))
+    model.add(Dense(1, activation='sigmoid'))
 
-    x = Dense(100, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
-    x = Dense(50, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
-    prediction = Dense(1, activation='sigmoid')(x)
-
-    model = models.Model(inputs=[productIdInput, dowInput, hourInput, orderNumberInput, daysSinceInput], outputs=[prediction])
-    model.compile(loss=losses.binary_crossentropy, optimizer=adam(), metrics=['accuracy'])
+    model.compile(loss='mse', optimizer=adam())
 
     board = TensorBoard(log_dir=MODEL_DIR, histogram_freq=2, write_graph=True, write_images=False)
     board.set_model(model)
     return model, board
+
+def loadModel(model):
+    try:                                      
+        model.load_weights("model.h5")
+        print("model loaded")        
+    except OSError:                           
+        print("can't find model file to load")
+
+def saveModel(model):
+    print("Saving model")                         
+    try:                                          
+        copyfile('model.h5', 'model.h5.saved')    
+        copyfile('model.json', 'model.json.saved')
+    except FileNotFoundError:                     
+        print("didn't find model files to save")  
+                                                    
+    model.save_weights("model.h5", overwrite=True)
+    with open("model.json", "w") as outfile:      
+        json.dump(model.to_json(), outfile)       
 
 def getWeightForOrder(order, currentOrder):
     return 0
 
 def f1Score(prediction,actual):
     correct = pd.merge(pd.DataFrame(prediction, columns=['product_id']), 
-        pd.DataFrame(actual[:, COL_PRODUCT_ID], columns=['product_id']), how='inner', on='product_id')
+        pd.DataFrame(actual, columns=['product_id']), how='inner', on='product_id')
     if len(correct) == 0:
         return 0
     precision = len(correct) / len(prediction)
     recall = len(correct) / len(actual)
-    return 2 * precision * recall / (precision + recall)
+    return 2 * precision * recall / (precision + recall), precision, recall
 
-def predictForUser(userOrders, userPrior):
-    # for now make the last order's weight 1, others 0
-    priorOrders = userOrders[0:len(userOrders)-1]
-    orderHash = {k[COL_ORDER_ID] : 0 for k in priorOrders}
-    orderHash[priorOrders[-1][COL_ORDER_ID]] = 1
+def predictForUser(model, userOrders, userPrior):
+    orderHash = {}
+    for i in range(0, len(userOrders)-1):
+        old = userOrders[i]
+        x = getInput(old, userOrders[-1])
+        # we use the predicted precision score as weight
+        orderHash[old[COL_ORDER_ID]] = model.predict(np.array([x]))[0][0]
 
     # assign the weights from orders to the products
     productHash = {k[COL_PRODUCT_ID] : 0 for k in userPrior}
@@ -131,15 +187,21 @@ def predictForUser(userOrders, userPrior):
     # select products based on weights
     predictedProducts = []
     for productId in productHash:
-        if productHash[productId] > 0.5:
+        if productHash[productId] > 0.4:
             predictedProducts.append(productId)
     return predictedProducts
 
-def trainForUser(userOrders, userPrior, userTrain):
-    predictedProducts = predictForUser(userOrders, userPrior)
+def trainForUser(model, history, userOrders, userPrior, userTrain):
+    samplesX, samplesY = generateTrainingData(userOrders, userPrior)
+    history.remember(samplesX, samplesY)
+    x,y = history.getBatch(BATCH_SIZE)
 
-    # calculate F1 score
-    return f1Score(predictedProducts, userTrain[:, COL_PRODUCT_ID])
+    loss = model.train_on_batch(x, y)
+
+    predictedProducts = predictForUser(model, userOrders, userPrior)
+    f1, precision, recall = f1Score(predictedProducts, userTrain[:, COL_PRODUCT_ID])
+    print("user {}\tloss {:.8f} f1 {:.8f}".format(userOrders[0][COL_USER_ID], loss, f1))
+    return f1
 
 def getUidRangeEnd(array, startIndex):
     uid = array[startIndex][COL_USER_ID]
@@ -154,6 +216,11 @@ def getUidRangeEnd(array, startIndex):
 
 # We use one user's past history to predict the last order
 def weightRegression(training):
+    model, board = createModel()
+    history = ReplayMemory()
+
+    loadModel(model)
+
     orders = loadDataFile('orders')
     prior = loadDataFile('order_products__prior')
     del prior['add_to_cart_order']
@@ -171,6 +238,7 @@ def weightRegression(training):
     allpredictions = []
     nextUid = orderPrior[priorStartIndex][COL_USER_ID]
     progress = 0
+    pdb.set_trace()
     while orderStartIndex < len(orders):
         currentUid = nextUid
 
@@ -197,12 +265,13 @@ def weightRegression(training):
             if trainStartIndex < len(orderTrain):
                 assert orderTrain[trainStartIndex][COL_USER_ID] != currentUid
 
-            f1 = trainForUser(userOrders, userPrior, userTrain)
+            f1 = trainForUser(model, history, userOrders, userPrior, userTrain)
             global trainCount, trainF1
             trainCount += 1
             trainF1 += f1
 
             if trainCount % 100 == 0:
+                saveModel(model)
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
         elif lastOrderType == 'test' and (not training):
             predictedProducts = predictForUser(userOrders, userPrior)
