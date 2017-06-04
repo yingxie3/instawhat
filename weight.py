@@ -171,7 +171,9 @@ def f1Score(prediction,actual):
 
 def predictForUser(model, userOrders, userPrior):
     orderHash = {}
-    for i in range(0, len(userOrders)-1):
+    # we only consider the most recent 3 orders
+    start = max(0, len(userOrders) - 4)
+    for i in range(start, len(userOrders)-1):
         old = userOrders[i]
         x = getInput(old, userOrders[-1])
         # we use the predicted precision score as weight
@@ -180,14 +182,16 @@ def predictForUser(model, userOrders, userPrior):
     # assign the weights from orders to the products
     productHash = {k[COL_PRODUCT_ID] : 0 for k in userPrior}
     for entry in userPrior:
-        w = orderHash[entry[COL_ORDER_ID]]
-        # productHash[entry.product_id] += (w * int(entry.reordered)) # if reordered is 0 throw it out
-        productHash[entry[COL_PRODUCT_ID]] += w
+        w = orderHash.get(entry[COL_ORDER_ID])
+        if w != None:
+            # productHash[entry.product_id] += (w * int(entry.reordered)) # if reordered is 0 throw it out
+            productHash[entry[COL_PRODUCT_ID]] += w
 
     # select products based on weights
     predictedProducts = []
+    print(productHash)
     for productId in productHash:
-        if productHash[productId] > 0.5:
+        if productHash[productId] > 0.4:
             predictedProducts.append(productId)
     return predictedProducts
 
@@ -238,7 +242,6 @@ def weightRegression(training):
     allpredictions = []
     nextUid = orderPrior[priorStartIndex][COL_USER_ID]
     progress = 0
-    pdb.set_trace()
     while orderStartIndex < len(orders):
         currentUid = nextUid
 
