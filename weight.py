@@ -60,6 +60,10 @@ TRAIN_STEPS = 50
 trainCount = 0
 trainF1 = 0
 
+bestWeight = 0.4
+weightTotal = 0
+weightCount = 0
+
 class ReplayMemory(object):
     def __init__(self, maxMemory=100000):
         self.maxMemory = maxMemory
@@ -169,6 +173,28 @@ def f1Score(prediction,actual):
     recall = len(correct) / len(actual)
     return 2 * precision * recall / (precision + recall), precision, recall
 
+# estimate the best weight to get the highest f1 score
+def getBestCutoff(actual, productHash):
+    # get a percentile histogram sorted by weight, in which bucket we track the number
+    # of correct and wrong entries.
+    minWeight = 0
+    actualWeights = []
+    for productId in actual:
+        w = productHash.get(productId)
+        if w == None:
+            w = 0
+        actualWeights.append([productId, w])
+
+    sortedActual = sorted(actualWeights, key=lambda x: x[1])
+    medianWeight = sortedActual[int(len(sortedActual)/2)][1]
+
+    global weightTotal, weightCount, bestWeight
+    weightTotal += medianWeight
+    weightCount += 1
+    bestWeight = weightTotal / weightCount
+    print("median weight: {:.4f} global weight {:.4f} {}".format(medianWeight, bestWeight, sortedActual))
+
+
 def predictForUser(model, userOrders, userPrior):
     orderHash = {}
     # we only consider the most recent 3 orders
@@ -188,12 +214,12 @@ def predictForUser(model, userOrders, userPrior):
             productHash[entry[COL_PRODUCT_ID]] += w
 
     # select products based on weights
+    global bestWeight
     predictedProducts = []
-    print(productHash)
     for productId in productHash:
-        if productHash[productId] > 0.4:
+        if productHash[productId] > bestWeight:
             predictedProducts.append(productId)
-    return predictedProducts
+    return predictedProducts, productHash
 
 def trainForUser(model, history, userOrders, userPrior, userTrain):
     samplesX, samplesY = generateTrainingData(userOrders, userPrior)
@@ -202,9 +228,11 @@ def trainForUser(model, history, userOrders, userPrior, userTrain):
 
     loss = model.train_on_batch(x, y)
 
-    predictedProducts = predictForUser(model, userOrders, userPrior)
+    predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
     f1, precision, recall = f1Score(predictedProducts, userTrain[:, COL_PRODUCT_ID])
     print("user {}\tloss {:.8f} f1 {:.8f}".format(userOrders[0][COL_USER_ID], loss, f1))
+
+    getBestCutoff(userTrain[:, COL_PRODUCT_ID], productHash)
     return f1
 
 def getUidRangeEnd(array, startIndex):
@@ -277,7 +305,7 @@ def weightRegression(training):
                 saveModel(model)
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
         elif lastOrderType == 'test' and (not training):
-            predictedProducts = predictForUser(model, userOrders, userPrior)
+            predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
             p = [lastOrder[COL_ORDER_ID], ''.join(str(e) + ' ' for e in predictedProducts)]
             allpredictions.append(p)
 
