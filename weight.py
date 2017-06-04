@@ -164,7 +164,7 @@ def f1Score(prediction,actual):
     correct = pd.merge(pd.DataFrame(prediction, columns=['product_id']), 
         pd.DataFrame(actual, columns=['product_id']), how='inner', on='product_id')
     if len(correct) == 0:
-        return 0
+        return 0, 0, 0
     precision = len(correct) / len(prediction)
     recall = len(correct) / len(actual)
     return 2 * precision * recall / (precision + recall), precision, recall
@@ -187,7 +187,7 @@ def predictForUser(model, userOrders, userPrior):
     # select products based on weights
     predictedProducts = []
     for productId in productHash:
-        if productHash[productId] > 0.4:
+        if productHash[productId] > 0.5:
             predictedProducts.append(productId)
     return predictedProducts
 
