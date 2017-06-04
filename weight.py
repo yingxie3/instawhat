@@ -38,6 +38,16 @@ COL_DAYS_SINCE = 6
 COL_PRODUCT_ID = 7
 COL_REORDERED = 8
 
+# training dataset columns. 
+TCOL_NUMBER_DIFF = 0
+TCOL_OLD_DOW = 1
+TCOL_DOW = 2
+TCOL_OLD_HOUR = 3
+TCOL_HOUR = 4
+TCOL_OLD_DAYS_SINCE = 5
+TCOL_DAYS_SINCE = 6
+TCOL_SCORE = 7
+
 LABEL = 'label'
 MODEL_DIR = './model'
 
@@ -46,11 +56,59 @@ TRAIN_STEPS = 50
 trainCount = 0
 trainF1 = 0
 
+# generate the data in sequence, we will randomize during training
+def generateTrainingData(userOrders, userPrior):
+    priorOrders = userOrders[0:len(userOrders)-1]
+
+    # order to product_id array mapping
+    productHash = {k[COL_ORDER_ID] : [] for k in priorOrders}
+    for entry in userPrior:
+        hashEntry = productHash.get(entry[COL_ORDER_ID])
+        if hashEntry == None:
+            # we reached the last order entry, which we don't use for training
+            break
+        hashEntry.append(entry[COL_PRODUCT_ID])
+
+    samples = []
+    for i1 in range(0, len(priorOrders)-1):
+        for i2 in range(i1+1, len(priorOrders)):
+            old = priorOrders[i1]
+            new = priorOrders[i2]
+
+            f1 = f1Score(hashEntry[o1[COL_ORDER_ID]], hashEntry[o2[COL_ORDER_ID]])
+            entry = [new[COL_ORDER_NUMBER] - old[COL_ORDER_NUMBER], old[COL_ORDER_DOW], new[COL_ORDER_DOW],
+                old[COL_ORDER_HOUR], new[COL_ORDER_HOUR], old[COL_DAYS_SINCE], new[COL_DAYS_SINCE], f1]
+            samples.append(entry)
+    return samples
+    
+def buildModel():
+    productIdInput = Input(shape=(1,), dtype='int32', name='product_id')
+    productIdEmbedding = Embedding(input_dim=50000, output_dim=4)(productIdInput)
+    productIdFlatten = Flatten()(productIdEmbedding)
+
+    dowInput = Input(shape=(1,), dtype='float32', name='order_dow')
+    hourInput = Input(shape=(1,), dtype='float32', name='order_hour_of_day')
+    orderNumberInput = Input(shape=(1,), dtype='float32', name='order_number')
+    daysSinceInput = Input(shape=(1,), dtype='float32', name='days_since_prior_order')
+    x = concatenate([productIdFlatten, dowInput, hourInput, orderNumberInput, daysSinceInput])
+
+    x = Dense(100, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = Dense(50, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    prediction = Dense(1, activation='sigmoid')(x)
+
+    model = models.Model(inputs=[productIdInput, dowInput, hourInput, orderNumberInput, daysSinceInput], outputs=[prediction])
+    model.compile(loss=losses.binary_crossentropy, optimizer=adam(), metrics=['accuracy'])
+
+    board = TensorBoard(log_dir=MODEL_DIR, histogram_freq=2, write_graph=True, write_images=False)
+    board.set_model(model)
+    return model, board
+
 def getWeightForOrder(order, currentOrder):
     return 0
 
 def f1Score(prediction,actual):
-    correct = pd.merge(prediction, actual, how='inner', on='product_id')
+    correct = pd.merge(pd.DataFrame(prediction, columns=['product_id']), 
+        pd.DataFrame(actual[:, COL_PRODUCT_ID], columns=['product_id']), how='inner', on='product_id')
     if len(correct) == 0:
         return 0
     precision = len(correct) / len(prediction)
@@ -81,9 +139,7 @@ def trainForUser(userOrders, userPrior, userTrain):
     predictedProducts = predictForUser(userOrders, userPrior)
 
     # calculate F1 score
-    f1 = f1Score(pd.DataFrame(predictedProducts, columns=['product_id']),
-        pd.DataFrame(userTrain[:, COL_PRODUCT_ID], columns=['product_id']))
-    return f1
+    return f1Score(predictedProducts, userTrain[:, COL_PRODUCT_ID])
 
 def getUidRangeEnd(array, startIndex):
     uid = array[startIndex][COL_USER_ID]
