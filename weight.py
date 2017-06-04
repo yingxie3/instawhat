@@ -274,7 +274,7 @@ def weightRegression(training):
                 saveModel(model)
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
         elif lastOrderType == 'test' and (not training):
-            predictedProducts = predictForUser(userOrders, userPrior)
+            predictedProducts = predictForUser(model, userOrders, userPrior)
             p = [lastOrder[COL_ORDER_ID], ''.join(str(e) + ' ' for e in predictedProducts)]
             allpredictions.append(p)
 
