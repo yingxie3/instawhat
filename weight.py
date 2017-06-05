@@ -60,7 +60,7 @@ TRAIN_STEPS = 50
 trainCount = 0
 trainF1 = 0
 
-bestWeight = 0.4
+bestWeight = 0.2
 weightTotal = 0
 weightCount = 0
 
@@ -251,6 +251,7 @@ def weightRegression(training):
     model, board = createModel()
     history = ReplayMemory()
 
+    validationData = [np.ones((BATCH_SIZE, TCOL_SCORE))]
     loadModel(model)
 
     orders = loadDataFile('orders')
@@ -302,8 +303,14 @@ def weightRegression(training):
             trainF1 += f1
 
             if trainCount % 100 == 0:
+                # on_epoch_end requires validataData to be present. It doesn't really need
+                # the data to get the histogram, so we just give is a pre-fabricated one.
+                board.validation_data = validationData
+                board.on_epoch_end(trainCount)
+
                 saveModel(model)
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
+        
         elif lastOrderType == 'test' and (not training):
             predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
             p = [lastOrder[COL_ORDER_ID], ''.join(str(e) + ' ' for e in predictedProducts)]
