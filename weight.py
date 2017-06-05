@@ -221,18 +221,20 @@ def predictForUser(model, userOrders, userPrior):
             predictedProducts.append(productId)
     return predictedProducts, productHash
 
-def trainForUser(model, history, userOrders, userPrior, userTrain):
-    samplesX, samplesY = generateTrainingData(userOrders, userPrior)
-    history.remember(samplesX, samplesY)
-    x,y = history.getBatch(BATCH_SIZE)
-
-    loss = model.train_on_batch(x, y)
+def trainForUser(model, history, userOrders, userPrior, userTrain, evalOnly):
+    loss = 0
+    if not evalOnly:
+        samplesX, samplesY = generateTrainingData(userOrders, userPrior)
+        history.remember(samplesX, samplesY)
+        x,y = history.getBatch(BATCH_SIZE)
+        loss = model.train_on_batch(x, y)
 
     predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
     f1, precision, recall = f1Score(predictedProducts, userTrain[:, COL_PRODUCT_ID])
     print("user {}\tloss {:.8f} f1 {:.8f}".format(userOrders[0][COL_USER_ID], loss, f1))
 
-    getBestCutoff(userTrain[:, COL_PRODUCT_ID], productHash)
+    if not evalOnly:
+        getBestCutoff(userTrain[:, COL_PRODUCT_ID], productHash)
     return f1
 
 def getUidRangeEnd(array, startIndex):
@@ -247,7 +249,7 @@ def getUidRangeEnd(array, startIndex):
     return i
 
 # We use one user's past history to predict the last order
-def weightRegression(training):
+def weightRegression(mode, startingUid):
     model, board = createModel()
     history = ReplayMemory()
 
@@ -269,6 +271,12 @@ def weightRegression(training):
     trainStartIndex = 0
     orderStartIndex = 0
     allpredictions = []
+
+    if startingUid != None:
+        priorStartIndex = next((x for x in orderPrior if x[COL_USER_ID] == startingUid), None)
+        trainStartIndex = next((x for x in orderTrain if x[COL_USER_ID] == startingUid), None)
+        orderStartIndex = next((x for x in orders if x[COL_USER_ID] == startingUid), None)
+    
     nextUid = orderPrior[priorStartIndex][COL_USER_ID]
     progress = 0
     while orderStartIndex < len(orders):
@@ -290,14 +298,14 @@ def weightRegression(training):
         lastOrder = userOrders[-1]
         lastOrderType = lastOrder[COL_EVAL_SET]
 
-        if lastOrderType == 'train' and training:
+        if lastOrderType == 'train' and (mode == 'train' or mode == 'evaluate'):
             trainEndIndex = getUidRangeEnd(orderTrain, trainStartIndex)
             userTrain = orderTrain[trainStartIndex : trainEndIndex]
             trainStartIndex = trainEndIndex
             if trainStartIndex < len(orderTrain):
                 assert orderTrain[trainStartIndex][COL_USER_ID] != currentUid
 
-            f1 = trainForUser(model, history, userOrders, userPrior, userTrain)
+            f1 = trainForUser(model, history, userOrders, userPrior, userTrain, mode == 'evaluate')
             global trainCount, trainF1
             trainCount += 1
             trainF1 += f1
@@ -311,7 +319,7 @@ def weightRegression(training):
                 saveModel(model)
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
         
-        elif lastOrderType == 'test' and (not training):
+        elif lastOrderType == 'test' and (mode == 'test'):
             predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
             p = [lastOrder[COL_ORDER_ID], ''.join(str(e) + ' ' for e in predictedProducts)]
             allpredictions.append(p)
@@ -325,10 +333,18 @@ def weightRegression(training):
     predictionDF.to_csv("submission.csv", index=False)
     return
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description='Parsing and training')                                         
-    parser.add_argument("-t", "--train", help="Train the model.", action="store_true")
+    parser.add_argument("-m", "--mode", help="train/evaluate/test")
+    parser.add_argument("-u", "--uid", help="Starting user id.")
+    parser.add_argument("-w", "--weight", help="The cutoff weight to use.")
                                                                                                                  
     args = parser.parse_args()                                                                                   
     
-    weightRegression(args.train)
+    if args.weight != None:
+        global bestWeight
+        bestWeight = float(args.weight)
+    weightRegression(args.mode, args.uid)
+
+if __name__ == '__main__':
+    main()
