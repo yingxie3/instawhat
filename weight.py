@@ -38,7 +38,8 @@ COL_ORDER_DOW = 4
 COL_ORDER_HOUR = 5
 COL_DAYS_SINCE = 6
 COL_PRODUCT_ID = 7
-COL_REORDERED = 8
+COL_CART_ORDER = 8
+COL_REORDERED = 9
 
 # training dataset columns. 
 TCOL_NUMBER_DIFF = 0
@@ -57,6 +58,7 @@ MODEL_DIR = './model'
 # training parameters
 BATCH_SIZE = 1000
 TRAIN_STEPS = 50
+ORDERS_TO_CONSIDER = 10
 trainCount = 0
 trainF1 = 0
 
@@ -197,14 +199,37 @@ def getBestCutoff(actual, productHash):
 
 def predictForUser(model, userOrders, userPrior):
     orderHash = {}
-    # we only consider the most recent 3 orders
-    start = max(0, len(userOrders) - 4)
+    # we only consider the most recent 4 orders
+    start = max(0, len(userOrders) - 1 - ORDERS_TO_CONSIDER)
     for i in range(start, len(userOrders)-1):
         old = userOrders[i]
         x = getInput(old, userOrders[-1])
         # we use the predicted precision score as weight
         orderHash[old[COL_ORDER_ID]] = model.predict(np.array([x]))[0][0]
+    # force everything from the very last order
+    orderHash[userOrders[-2][COL_ORDER_ID]] = 1
 
+    # from each order, select the percentage of products that matches the model's prediction
+    i = 0
+    predictedProducts = set()
+    while i < len(userPrior):
+        currentProduct = userPrior[i]
+        assert currentProduct[COL_CART_ORDER] == 1
+        nextIndex = i + next((idx for idx, x in enumerate(userPrior[i:]) if x[COL_ORDER_ID] != currentProduct[COL_ORDER_ID]),
+            len(userPrior[i:]))
+
+        w = orderHash.get(currentProduct[COL_ORDER_ID])
+        if w != None:
+            productsInOrder = userPrior[nextIndex-1][COL_CART_ORDER]
+            count = int(productsInOrder * w)
+            for j in range(i, i+count):
+                predictedProducts.add(userPrior[j][COL_PRODUCT_ID])
+
+        i = nextIndex
+    
+    return list(predictedProducts), {}
+
+    '''
     # assign the weights from orders to the products
     productHash = {k[COL_PRODUCT_ID] : 0 for k in userPrior}
     for entry in userPrior:
@@ -220,6 +245,7 @@ def predictForUser(model, userOrders, userPrior):
         if productHash[productId] > bestWeight:
             predictedProducts.append(productId)
     return predictedProducts, productHash
+    '''
 
 def trainForUser(model, history, userOrders, userPrior, userTrain, evalOnly):
     loss = 0
@@ -258,9 +284,7 @@ def weightRegression(mode, startingUid):
 
     orders = loadDataFile('orders')
     prior = loadDataFile('order_products__prior')
-    del prior['add_to_cart_order']
     train = loadDataFile('order_products__train')
-    del train['add_to_cart_order']
 
     orderPrior = pd.merge(left=orders, right=prior, how='inner', on='order_id').values
     orderTrain = pd.merge(left=orders, right=train, how='inner', on='order_id').values
@@ -347,4 +371,5 @@ def main():
     weightRegression(args.mode, args.uid)
 
 if __name__ == '__main__':
+    #pdb.set_trace()
     main()
