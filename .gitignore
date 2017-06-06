@@ -1,3 +1,6 @@
 __pycache__
 model
 data
+submissions
+log*
+model.*

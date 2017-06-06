@@ -208,7 +208,7 @@ def predictForUser(model, userOrders, userPrior):
         orderHash[old[COL_ORDER_ID]] = model.predict(np.array([x]))[0][0]
     # force everything from the very last order
     orderHash[userOrders[-2][COL_ORDER_ID]] = 1
-
+    '''
     # from each order, select the percentage of products that matches the model's prediction
     i = 0
     predictedProducts = set()
@@ -245,7 +245,7 @@ def predictForUser(model, userOrders, userPrior):
         if productHash[productId] > bestWeight:
             predictedProducts.append(productId)
     return predictedProducts, productHash
-    '''
+    
 
 def trainForUser(model, history, userOrders, userPrior, userTrain, evalOnly):
     loss = 0
