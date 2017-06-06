@@ -41,16 +41,13 @@ COL_PRODUCT_ID = 7
 COL_CART_ORDER = 8
 COL_REORDERED = 9
 
-# training dataset columns. 
+# training dataset columns. One data point is 3x of the following, to form a 3x3 block
 TCOL_NUMBER_DIFF = 0
-TCOL_OLD_DOW = 1
-TCOL_DOW = 2
-TCOL_OLD_HOUR = 3
-TCOL_HOUR = 4
-TCOL_OLD_DAYS_SINCE = 5
-TCOL_DAYS_SINCE = 6
+TCOL_DOW_DIFF = 1
+TCOL_HOUR_DIFF = 2
+TCOL_DAYS_DIFF = 3
 # the score we are predicting, must be the last
-TCOL_SCORE = 7
+TCOL_SCORE = 4
 
 LABEL = 'label'
 MODEL_DIR = './model'
@@ -62,7 +59,7 @@ ORDERS_TO_CONSIDER = 10
 trainCount = 0
 trainF1 = 0
 
-bestWeight = 0.2
+bestWeight = 0.5
 weightTotal = 0
 weightCount = 0
 
@@ -97,9 +94,9 @@ class ReplayMemory(object):
         return x,y
 
 # Generate the input to the NN from the old and new data order data point
-def getInput(old, new):
-    return np.array([new[COL_ORDER_NUMBER] - old[COL_ORDER_NUMBER], old[COL_ORDER_DOW], new[COL_ORDER_DOW],
-        old[COL_ORDER_HOUR], new[COL_ORDER_HOUR], old[COL_DAYS_SINCE], new[COL_DAYS_SINCE]])
+def getInput(old, new, daysDiff):
+    return np.array([new[COL_ORDER_NUMBER] - old[COL_ORDER_NUMBER], new[COL_ORDER_DOW]-old[COL_ORDER_DOW],
+        new[COL_ORDER_HOUR]-old[COL_ORDER_HOUR], daysDiff])
 
 # generate the data in sequence, we will randomize during training
 def generateTrainingData(userOrders, userPrior):
@@ -117,12 +114,15 @@ def generateTrainingData(userOrders, userPrior):
     x = []
     y = []
     for i1 in range(0, len(priorOrders)-1):
-        for i2 in range(i1+1, len(priorOrders)):
+        daysDiff = 0
+        rangeEnd = min(len(priorOrders), i1 + ORDERS_TO_CONSIDER + 1)
+        for i2 in range(i1+1, rangeEnd):
             old = priorOrders[i1]
             new = priorOrders[i2]
 
+            daysDiff += new[COL_DAYS_SINCE]
             f1, precision, recall = f1Score(productHash[old[COL_ORDER_ID]], productHash[new[COL_ORDER_ID]])
-            x.append(getInput(old, new))
+            x.append(getInput(old, new, daysDiff))
             y.append(precision)
     return x,y
 
@@ -199,13 +199,18 @@ def getBestCutoff(actual, productHash):
 
 def predictForUser(model, userOrders, userPrior):
     orderHash = {}
-    # we only consider the most recent 4 orders
+    # we only consider the most recent ORDERS_TO_CONSIDER orders
     start = max(0, len(userOrders) - 1 - ORDERS_TO_CONSIDER)
-    for i in range(start, len(userOrders)-1):
+    daysDiff = userOrders[-1][COL_DAYS_SINCE]
+    for i in reversed(range(start, len(userOrders)-1)):
         old = userOrders[i]
-        x = getInput(old, userOrders[-1])
+        x = getInput(old, userOrders[-1], daysDiff)
         # we use the predicted precision score as weight
         orderHash[old[COL_ORDER_ID]] = model.predict(np.array([x]))[0][0]
+
+        if i != 0:
+            daysDiff += old[COL_DAYS_SINCE]
+
     # force everything from the very last order
     orderHash[userOrders[-2][COL_ORDER_ID]] = 1
     '''
@@ -371,5 +376,5 @@ def main():
     weightRegression(args.mode, args.uid)
 
 if __name__ == '__main__':
-    #pdb.set_trace()
+    # pdb.set_trace()
     main()

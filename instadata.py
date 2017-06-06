@@ -7,7 +7,7 @@ DATA_DIR = './data'
 # Helper functions to make other code cleaner looking
 def loadDataFile(dataname):
     d = pd.read_csv("{}/{}.csv".format(DATA_DIR, dataname), engine='c')
-    d = d.dropna(how='any', axis=0)
+    # d = d.dropna(how='any', axis=0)
     print("Loaded {} {}".format(d.shape[0], dataname))
     return d
 
