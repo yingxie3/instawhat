@@ -15,6 +15,7 @@ import keras.backend as kb
 from keras import losses
 from keras import models
 from keras import regularizers
+from keras.layers.noise import GaussianNoise
 from keras.layers.core import Dense
 from keras.layers.core import Flatten
 from keras.layers import Input
@@ -54,14 +55,17 @@ MODEL_DIR = './model'
 
 # training parameters
 BATCH_SIZE = 1000
-TRAIN_STEPS = 50
+TRAIN_STEPS = 500
 ORDERS_TO_CONSIDER = 10
 trainCount = 0
 trainF1 = 0
 
-bestWeight = 0.5
+bestWeight = 0.4
 weightTotal = 0
 weightCount = 0
+
+# random weights used to reinit the NN
+randomWeights = None
 
 class ReplayMemory(object):
     def __init__(self, maxMemory=100000):
@@ -128,17 +132,15 @@ def generateTrainingData(userOrders, userPrior):
 
 def createModel():
     model = models.Sequential()
-    model.add(Dense(100, input_shape=(TCOL_SCORE,)))
+    model.add(Dense(100, input_shape=(TCOL_SCORE,), name='d1'))
     model.add(LeakyReLU(alpha=0.03))
-    model.add(Dense(100))
+    model.add(Dense(100, name='d2'))
     model.add(LeakyReLU(alpha=0.03))
-    model.add(Dense(100))
-    model.add(LeakyReLU(alpha=0.03))
-    model.add(Dense(100))
-    model.add(LeakyReLU(alpha=0.03))
-    model.add(Dense(1, activation='sigmoid'))
+    model.add(Dense(1, activation='sigmoid', name='out'))
 
     model.compile(loss='mse', optimizer=adam())
+    global randomWeights
+    randomWeights = model.get_weights().copy()
 
     board = TensorBoard(log_dir=MODEL_DIR, histogram_freq=2, write_graph=True, write_images=False)
     board.set_model(model)
@@ -175,27 +177,15 @@ def f1Score(prediction,actual):
     recall = len(correct) / len(actual)
     return 2 * precision * recall / (precision + recall), precision, recall
 
-# estimate the best weight to get the highest f1 score
-def getBestCutoff(actual, productHash):
-    # get a percentile histogram sorted by weight, in which bucket we track the number
-    # of correct and wrong entries.
-    minWeight = 0
-    actualWeights = []
-    for productId in actual:
-        w = productHash.get(productId)
-        if w == None:
-            w = 0
-        actualWeights.append([productId, w])
+# given productHash that maps id to weight, and the number of desired products, return
+# the list of product ids with the highest weights
+def getBestProducts(productHash, desiredCount):
+    if desiredCount >= len(productHash):
+        return list(productHash)
 
-    sortedActual = sorted(actualWeights, key=lambda x: x[1])
-    medianWeight = sortedActual[int(len(sortedActual)/2)][1]
-
-    global weightTotal, weightCount, bestWeight
-    weightTotal += medianWeight
-    weightCount += 1
-    bestWeight = weightTotal / weightCount
-    print("median weight: {:.4f} global weight {:.4f} {}".format(medianWeight, bestWeight, sortedActual))
-
+    productList = [[k,v] for k,v in productHash.items()]
+    sortedList = sorted(productList, key=lambda x: -x[1])
+    return [x[0] for x in sortedList[0:desiredCount]]
 
 def predictForUser(model, userOrders, userPrior):
     orderHash = {}
@@ -211,9 +201,11 @@ def predictForUser(model, userOrders, userPrior):
         if i != 0:
             daysDiff += old[COL_DAYS_SINCE]
 
-    # force everything from the very last order
-    orderHash[userOrders[-2][COL_ORDER_ID]] = 1
     '''
+    for i in range(start, len(userOrders)-1):
+        print("order {}\tweight {:.4f}".format(userOrders[i][COL_ORDER_ID], orderHash[userOrders[i][COL_ORDER_ID]]))
+    # force everything from the very last order
+    #orderHash[userOrders[-2][COL_ORDER_ID]] = 1
     # from each order, select the percentage of products that matches the model's prediction
     i = 0
     predictedProducts = set()
@@ -233,40 +225,45 @@ def predictForUser(model, userOrders, userPrior):
         i = nextIndex
     
     return list(predictedProducts), {}
-
     '''
+
     # assign the weights from orders to the products
-    productHash = {k[COL_PRODUCT_ID] : 0 for k in userPrior}
+    totalOrderProducts = 0
+    productHash = {}
     for entry in userPrior:
         w = orderHash.get(entry[COL_ORDER_ID])
-        if w != None:
-            # productHash[entry.product_id] += (w * int(entry.reordered)) # if reordered is 0 throw it out
+        if w == None:
+            continue
+
+        totalOrderProducts += 1
+
+        # Give preference to the reordered ones.
+        if entry[COL_REORDERED] == 1:
+            w *= 1.5
+        
+        if productHash.get(entry[COL_PRODUCT_ID]) == None:
+            productHash[entry[COL_PRODUCT_ID]] = w
+        else:
             productHash[entry[COL_PRODUCT_ID]] += w
 
-    # select products based on weights
-    global bestWeight
-    predictedProducts = []
-    for productId in productHash:
-        if productHash[productId] > bestWeight:
-            predictedProducts.append(productId)
-    return predictedProducts, productHash
-    
+    return getBestProducts(productHash, int(totalOrderProducts / len(orderHash) + 1)), productHash
 
-def trainForUser(model, history, userOrders, userPrior, userTrain, evalOnly):
-    loss = 0
-    if not evalOnly:
-        samplesX, samplesY = generateTrainingData(userOrders, userPrior)
-        history.remember(samplesX, samplesY)
-        x,y = history.getBatch(BATCH_SIZE)
-        loss = model.train_on_batch(x, y)
+def trainForUser(model, history, userOrders, userPrior):
+    loss = 1
+    global randomWeights
+    model.set_weights(randomWeights)
 
-    predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
-    f1, precision, recall = f1Score(predictedProducts, userTrain[:, COL_PRODUCT_ID])
-    print("user {}\tloss {:.8f} f1 {:.8f}".format(userOrders[0][COL_USER_ID], loss, f1))
-
-    if not evalOnly:
-        getBestCutoff(userTrain[:, COL_PRODUCT_ID], productHash)
-    return f1
+    samplesX, samplesY = generateTrainingData(userOrders, userPrior)
+    '''
+    history.remember(samplesX, samplesY)
+    x,y = history.getBatch(BATCH_SIZE)
+    loss = model.train_on_batch(x, y)
+    '''
+    count = 0
+    while loss > 0.01 and count < TRAIN_STEPS:
+        loss = model.train_on_batch(np.array(samplesX), np.array(samplesY))
+        count += 1
+    return loss
 
 def getUidRangeEnd(array, startIndex):
     uid = array[startIndex][COL_USER_ID]
@@ -334,7 +331,17 @@ def weightRegression(mode, startingUid):
             if trainStartIndex < len(orderTrain):
                 assert orderTrain[trainStartIndex][COL_USER_ID] != currentUid
 
-            f1 = trainForUser(model, history, userOrders, userPrior, userTrain, mode == 'evaluate')
+            loss = 0
+            if mode == 'train':
+                loss = trainForUser(model, history, userOrders, userPrior)
+
+            predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
+            userTrainReorderedOnly = []
+            for x in userTrain:
+                if x[COL_REORDERED] == 1:
+                    userTrainReorderedOnly.append(x[COL_PRODUCT_ID])
+            f1, precision, recall = f1Score(predictedProducts, userTrainReorderedOnly)
+            print("============== user {}\tloss {:.8f} f1 {:.8f}".format(userOrders[0][COL_USER_ID], loss, f1))
             global trainCount, trainF1
             trainCount += 1
             trainF1 += f1
@@ -345,10 +352,11 @@ def weightRegression(mode, startingUid):
                 board.validation_data = validationData
                 board.on_epoch_end(trainCount)
 
-                saveModel(model)
+                #saveModel(model)
                 print("****************************************{} f1_score: {:.4f} avg: {:.4f}".format(trainCount, f1, trainF1/trainCount))
         
         elif lastOrderType == 'test' and (mode == 'test'):
+            trainForUser(model, history, userOrders, userPrior)
             predictedProducts, productHash = predictForUser(model, userOrders, userPrior)
             p = [lastOrder[COL_ORDER_ID], ''.join(str(e) + ' ' for e in predictedProducts)]
             allpredictions.append(p)
@@ -376,5 +384,5 @@ def main():
     weightRegression(args.mode, args.uid)
 
 if __name__ == '__main__':
-    # pdb.set_trace()
+    #pdb.set_trace()
     main()
