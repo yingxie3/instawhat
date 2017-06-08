@@ -297,9 +297,9 @@ def weightRegression(mode, startingUid):
     allpredictions = []
 
     if startingUid != None:
-        priorStartIndex = next((x for x in orderPrior if x[COL_USER_ID] == startingUid), None)
-        trainStartIndex = next((x for x in orderTrain if x[COL_USER_ID] == startingUid), None)
-        orderStartIndex = next((x for x in orders if x[COL_USER_ID] == startingUid), None)
+        priorStartIndex = next((idx for idx, x in enumerate(orderPrior) if x[COL_USER_ID] == startingUid), None)
+        trainStartIndex = next((idx for idx, x in enumerate(orderTrain) if x[COL_USER_ID] == startingUid), None)
+        orderStartIndex = next((idx for idx, x in enumerate(orders) if x[COL_USER_ID] == startingUid), None)
     
     nextUid = orderPrior[priorStartIndex][COL_USER_ID]
     progress = 0
@@ -349,10 +349,11 @@ def weightRegression(mode, startingUid):
             allpredictions.append(p)
 
             progress += 1
-
+            print("{},{}".format(p[0], p[1]))
+            '''
             if progress % 100 == 0:
                 print("------------------processed {}".format(progress))
-
+            '''
     predictionDF = pd.DataFrame(allpredictions, columns=['order_id', 'products'])
     predictionDF.to_csv("submission.csv", index=False)
     return
@@ -368,7 +369,7 @@ def main():
     if args.weight != None:
         global bestWeight
         bestWeight = float(args.weight)
-    weightRegression(args.mode, args.uid)
+    weightRegression(args.mode, int(args.uid))
 
 if __name__ == '__main__':
     #pdb.set_trace()
