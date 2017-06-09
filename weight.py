@@ -297,6 +297,7 @@ def weightRegression(mode, startingUid):
     allpredictions = []
 
     if startingUid != None:
+        startingUid = int(startingUid)
         priorStartIndex = next((idx for idx, x in enumerate(orderPrior) if x[COL_USER_ID] == startingUid), None)
         trainStartIndex = next((idx for idx, x in enumerate(orderTrain) if x[COL_USER_ID] == startingUid), None)
         orderStartIndex = next((idx for idx, x in enumerate(orders) if x[COL_USER_ID] == startingUid), None)
@@ -369,7 +370,7 @@ def main():
     if args.weight != None:
         global bestWeight
         bestWeight = float(args.weight)
-    weightRegression(args.mode, int(args.uid))
+    weightRegression(args.mode, args.uid)
 
 if __name__ == '__main__':
     #pdb.set_trace()
