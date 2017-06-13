@@ -79,10 +79,12 @@ def buildCNNModel():
     board = TensorBoard(log_dir='model', histogram_freq=1, write_graph=True, write_images=False)
     return model, board
     
-def testFC(model, board):
+def testFC():
+    model, board = buildDenseModel()
+
     total = 10000
     allX, allY, allEX, allEY = getSeries(0.06, total)
-    '''
+    
     for i in range(1, 10):
         x, y, evalX, evalY = getSeries(0.06 + i * 0.006, total)
         allX = np.concatenate((allX, x))
@@ -91,8 +93,11 @@ def testFC(model, board):
         allEY = np.concatenate((allEY, evalY))
 
     testX, testY, allTX, allTY = getSeries(0.03, total)
-    '''
-    history = model.fit(x=allX, y=allY, validation_data=(allEX, allEY), batch_size=100, epochs=30, callbacks=[board])
+    
+    history = model.fit(x=allX, y=allY, validation_data=(allTX, allTY), batch_size=100, epochs=30, callbacks=[board])
+
+    plotGenerated(model, 0.083)
+    plotGenerated(model, 0.03)
     return
 
 def testCNN():
@@ -149,7 +154,7 @@ def plotGeneratedCNN(model, a):
 
 def main():
     pdb.set_trace()
-    testCNN()
+    testFC()
     return
 
 if __name__ == '__main__':
