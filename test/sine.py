@@ -19,7 +19,7 @@ from keras.callbacks import TensorBoard
 from keras.optimizers import adam
 from keras.layers.advanced_activations import LeakyReLU
 
-INPUT_COUNT = 20
+INPUT_COUNT = 40
 
 # generate a sequence of data, using x = sin(a*i). Passing in a and count
 def getSineData(a, count):
@@ -37,16 +37,19 @@ def getXY(data, total):
     return x,y
 
 # Generate the training and evaluating data sets for data series sin(a*x)
-def getSeries(a, count):
-    data = getSineData(a, count)
-    trainCount = int(count * 0.9)
-    testCount = count - trainCount
+def getSeries(a, trainCount, testCount=0):
+    data = getSineData(a, trainCount+testCount)
     x,y = getXY(data, trainCount)
-    evalX, evalY = getXY(data[trainCount:], testCount)
+    if testCount > INPUT_COUNT:
+        evalX, evalY = getXY(data[trainCount:], testCount)
+    else:
+        evalX, evalY = None, None
     return x, y, evalX, evalY
 
-def getCNNSeries(a, count):
-    x, y, evalX, evalY = getSeries(a, count)
+def getCNNSeries(a, trainCount, testCount):
+    x, y, evalX, evalY = getSeries(a, trainCount, testCount)
+    if testCount <= INPUT_COUNT:
+        return x.reshape(x.shape[0], x.shape[1], 1), y, None, None
     return x.reshape(x.shape[0], x.shape[1], 1), y, evalX.reshape(evalX.shape[0], evalX.shape[1], 1), evalY
 
 def buildFCModel():
@@ -93,20 +96,18 @@ def buildLSTMModel():
 def testFC():
     model, board = buildFCModel()
 
-    total = 10000
-    allX, allY, allEX, allEY = getSeries(0.06, total)
+    allX, allY, allEX, allEY = getSeries(0.06, 3000, 300)
     
     for i in range(1, 10):
-        x, y, evalX, evalY = getSeries(0.06 + i * 0.006, total)
+        x, y, evalX, evalY = getSeries(0.06 + i * 0.006, 3000, 300)
         allX = np.concatenate((allX, x))
         allY = np.concatenate((allY, y))
         allEX = np.concatenate((allEX, evalX))
         allEY = np.concatenate((allEY, evalY))
-
-    testX, testY, allTX, allTY = getSeries(0.03, total)
     
-    history = model.fit(x=allX, y=allY, validation_data=(allTX, allTY), batch_size=100, epochs=30, callbacks=[board])
+    history = model.fit(x=allX, y=allY, validation_data=(allEX, allEY), batch_size=100, epochs=10, callbacks=[board])
 
+    plotGenerated(model, 0.06)
     plotGenerated(model, 0.083)
     plotGenerated(model, 0.163)
     plotGenerated(model, 0.033)
@@ -115,20 +116,18 @@ def testFC():
 def testCNN():
     model, board = buildCNNModel()
 
-    total = 10000
-    allX, allY, allEX, allEY = getCNNSeries(0.06, total)
+    allX, allY, allEX, allEY = getCNNSeries(0.06, 3000, 300)
     
     for i in range(1, 10):
-        x, y, evalX, evalY = getCNNSeries(0.06 + i * 0.006, total)
+        x, y, evalX, evalY = getCNNSeries(0.06 + i * 0.006, 3000, 300)
         allX = np.concatenate((allX, x))
         allY = np.concatenate((allY, y))
         allEX = np.concatenate((allEX, evalX))
         allEY = np.concatenate((allEY, evalY))
-
-    testX, testY, allTX, allTY = getCNNSeries(0.03, total)
     
-    history = model.fit(x=allX, y=allY, validation_data=(allTX, allTY), batch_size=100, epochs=30, callbacks=[board])
+    history = model.fit(x=allX, y=allY, validation_data=(allEX, allEY), batch_size=100, epochs=10, callbacks=[board])
 
+    plotGeneratedCNN(model, 0.06)
     plotGeneratedCNN(model, 0.083)
     plotGeneratedCNN(model, 0.163)
     plotGeneratedCNN(model, 0.033)
@@ -137,13 +136,9 @@ def testCNN():
 def testLSTM():
     model, board = buildLSTMModel()
 
-    total = 1001
-    trainSize = int(total * 0.9)
-    testData = getSineData(0.05, total)
+    total = 3300
+    trainSize = 3000
 
-    # we are not really validating, just use this to make tensorboard work with train_on_batch
-    board.validation_data = None
-    
     for epoch in range(0, 10):
         for i in range(0, 10):
             data = getSineData(0.06 + i * 0.006, total)
@@ -153,9 +148,8 @@ def testLSTM():
             evalY = data[trainSize+1:total]
             model.fit(x=x, y=y, validation_data=(evalX, evalY), batch_size=1, epochs=1, shuffle=False)
             model.reset_states()
-
-        board.on_epoch_end(epoch)
     
+    plotGeneratedLSTM(model, 0.06)
     plotGeneratedLSTM(model, 0.083)
     plotGeneratedLSTM(model, 0.163)
     plotGeneratedLSTM(model, 0.033)
@@ -173,7 +167,7 @@ def render(y, predicted, a, count):
 # values of x for each data point. Plot out y against predicted data points.
 def plotPredicted(model, a):
     model.reset_states()
-    x, y, eX, eY = getSeries(a, 200)
+    x, y, eX, eY = getSeries(a, 300)
     predicted = model.predict(x=x)
     render(y, predicted, a, 100)
 
@@ -181,7 +175,7 @@ def plotPredicted(model, a):
 # predict the next data in the time series. Then predict more using the generated data points
 # form earlier predictions.
 def plotGenerated(model, a):
-    x, y, eX, eY = getSeries(a, 200)
+    x, y, eX, eY = getSeries(a, 300)
     predicted = np.zeros((100,))
     gx = x[0].copy()
     for i in range(0, 100):
@@ -191,7 +185,7 @@ def plotGenerated(model, a):
     render(y, predicted, a, 100)
 
 def plotGeneratedCNN(model, a):
-    x, y, eX, eY = getCNNSeries(a, 200)
+    x, y, eX, eY = getCNNSeries(a, 300, 0)
     predicted = np.zeros((100,))
     gx = x[0].copy()
     for i in range(0, 100):
