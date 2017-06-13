@@ -137,9 +137,9 @@ def testLSTM():
     total = 1001
     trainSize = int(total * 0.9)
     
-    for epoch in range(0, 10):
+    for epoch in range(0, 5):
         for i in range(0, 10):
-            data = getSineData(0.06 + i*0.006, total)
+            data = getSineData(0.06 + i * 0.006, total)
             x = data[0:trainSize].reshape((trainSize, 1, 1))
             y = data[1:trainSize+1]
             evalX = data[trainSize:total-1].reshape((total-1-trainSize, 1, 1))
@@ -148,17 +148,19 @@ def testLSTM():
             model.reset_states()
     
     plotGeneratedLSTM(model, 0.083)
-    plotGeneratedLSTM(model, 0.03)
+    plotGeneratedLSTM(model, 0.043)
     return
 
 def plotPredicted(model, a):
+    model.reset_states()
     x, y, eX, eY = getSeries(a, 200)
     predict = model.predict(x=x)
-    plt.plot(y[0:100], label='truth')
-    plt.plot(predict[0:100], label='predicted')
+    plt.plot(y[0:100])
+    plt.plot(predict[0:100])
     plt.show()
 
 def plotGenerated(model, a):
+    model.reset_states()
     x, y, eX, eY = getSeries(a, 200)
     predict = np.zeros((100,))
     gx = x[0].copy()
@@ -171,6 +173,7 @@ def plotGenerated(model, a):
     plt.show()
 
 def plotGeneratedCNN(model, a):
+    model.reset_states()
     x, y, eX, eY = getCNNSeries(a, 200)
     predict = np.zeros((100,))
     gx = x[0].copy()
@@ -183,12 +186,21 @@ def plotGeneratedCNN(model, a):
     plt.show()
 
 def plotGeneratedLSTM(model, a):
-    data = getSineData(a, 200)
+    model.reset_states()
+    data = getSineData(a, 300)
     x = data[0:100]
-    y = data[1:101]
-    predicted = model.predict(x=x.reshape((100, 1, 1)), batch_size=1)
-    plt.plot(y[0:100])
-    plt.plot(predicted[0:100])
+    # Build up LSTM state
+    model.predict(x=x.reshape((100, 1, 1)), batch_size=1)
+
+    y = data[101:201]
+    predicted = np.zeros((100,))
+    gx = data[0]
+    for i in range(100, 200):
+        predicted[i-100] = model.predict(x=gx.reshape(1, 1, 1))
+        gx = predicted[i-100]
+
+    plt.plot(y)
+    plt.plot(predicted)
     plt.show()
 
 def main():
