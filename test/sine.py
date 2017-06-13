@@ -12,6 +12,7 @@ from keras import regularizers
 from keras.layers.core import Dense
 from keras.layers.core import Dropout
 from keras.layers.core import Flatten
+from keras.layers.recurrent import LSTM
 from keras.layers import Input
 from keras.layers import concatenate
 from keras.layers.merge import *
@@ -78,6 +79,15 @@ def buildCNNModel():
 
     board = TensorBoard(log_dir='model', histogram_freq=1, write_graph=True, write_images=False)
     return model, board
+
+def buildLSTMModel():
+    model = models.Sequential()
+    model.add(LSTM(100, batch_input_shape=(1, 1, 1), return_sequences=False, stateful=True))
+    model.add(Dense(1))
+    model.compile(loss='mse', optimizer=adam(lr=0.0001))
+
+    board = TensorBoard(log_dir='model', histogram_freq=1, write_graph=True, write_images=False)
+    return model, board
     
 def testFC():
     model, board = buildDenseModel()
@@ -121,6 +131,26 @@ def testCNN():
     plotGeneratedCNN(model, 0.03)
     return
 
+def testLSTM():
+    model, board = buildLSTMModel()
+
+    total = 1001
+    trainSize = int(total * 0.9)
+    
+    for epoch in range(0, 10):
+        for i in range(0, 10):
+            data = getSineData(0.06 + i*0.006, total)
+            x = data[0:trainSize].reshape((trainSize, 1, 1))
+            y = data[1:trainSize+1]
+            evalX = data[trainSize:total-1].reshape((total-1-trainSize, 1, 1))
+            evalY = data[trainSize+1:total]
+            model.fit(x=x, y=y, validation_data=(evalX, evalY), batch_size=1, epochs=1, shuffle=False)
+            model.reset_states()
+    
+    plotGeneratedLSTM(model, 0.083)
+    plotGeneratedLSTM(model, 0.03)
+    return
+
 def plotPredicted(model, a):
     x, y, eX, eY = getSeries(a, 200)
     predict = model.predict(x=x)
@@ -152,9 +182,18 @@ def plotGeneratedCNN(model, a):
     plt.plot(predict[0:100])
     plt.show()
 
+def plotGeneratedLSTM(model, a):
+    data = getSineData(a, 200)
+    x = data[0:100]
+    y = data[1:101]
+    predicted = model.predict(x=x.reshape((100, 1, 1)), batch_size=1)
+    plt.plot(y[0:100])
+    plt.plot(predicted[0:100])
+    plt.show()
+
 def main():
     pdb.set_trace()
-    testFC()
+    testLSTM()
     return
 
 if __name__ == '__main__':
