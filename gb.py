@@ -10,9 +10,9 @@
 
 import numpy as np
 import pandas as pd
+import pdb
 import lightgbm as lgb
 IDIR = './data/'
-
 
 print('loading prior')
 priors = pd.read_csv(IDIR + 'order_products__prior.csv', dtype={
@@ -193,13 +193,13 @@ def features(selected_orders, labels_given=False):
 
 df_train, labels = features(train_orders, labels_given=True)
 
-f_to_use = ['user_total_orders', 'user_total_items', 'total_distinct_items',
+f_to_use = [
        'user_average_days_between_orders', 'user_average_basket',
        'order_hour_of_day', 'days_since_prior_order', 'days_since_ratio',
        'aisle_id', 'department_id', 'product_orders', 'product_reorders',
        'product_reorder_rate', 'UP_orders', 'UP_orders_ratio',
        'UP_average_pos_in_cart', 'UP_reorder_rate', 'UP_orders_since_last',
-       'UP_delta_hour_vs_last'] # 'dow', 'UP_same_dow_as_last_order'
+       'UP_delta_hour_vs_last'] # 'user_total_orders', 'user_total_items', 'total_distinct_items', 'dow', 'UP_same_dow_as_last_order'
 
 
 print('formating for lgb')
