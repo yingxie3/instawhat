@@ -213,13 +213,13 @@ params = {
     'boosting_type': 'gbdt',
     'objective': 'binary',
     'metric': {'binary_logloss'},
-    'num_leaves': 96,
-    'max_depth': 10,
+    'num_leaves': 128,
+    'max_depth': 12,
     'feature_fraction': 0.9,
     'bagging_fraction': 0.95,
     'bagging_freq': 5
 }
-ROUNDS = 100
+ROUNDS = 200
 
 print('light GBM train :-)')
 bst = lgb.train(params, d_train, ROUNDS)
